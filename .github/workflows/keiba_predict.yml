@@ -1,0 +1,59 @@
+name: Keiba Prediction Pipeline
+
+on:
+  schedule:
+    # 毎日 7:05 に実行（任意）
+    - cron: "5 22 * * *"   # JST 07:05
+  workflow_dispatch:
+
+jobs:
+  run-keiba:
+    runs-on: ubuntu-latest
+
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+
+    steps:
+    - name: Checkout repo
+      uses: actions/checkout@v4
+
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.11"
+
+    - name: Install dependencies
+      run: |
+        pip install -r requirements.txt
+
+    # --- ① 開催日判定 + スクレイピング ---
+    - name: Get race info
+      run: |
+        python scraper/get_race_info.py --date today --output race_info.json
+
+    # --- ② 騎手情報取得 ---
+    - name: Get jockey stats
+      run: |
+        python scraper/get_jockey_stats.py --input race_info.json --output race_with_jockey.json
+
+    # --- ③ 整形 ---
+    - name: Merge and clean data
+      run: |
+        python scraper/merge_and_clean.py \
+          --input race_with_jockey.json \
+          --output clean_data.json
+
+    # --- ④ AI解析（GPT + Geminiを使用） ---
+    - name: Run AI predictions
+      run: |
+        python ai/ensemble.py \
+          --input clean_data.json \
+          --output prediction.json
+
+    # --- ⑤ Discord 通知 ---
+    - name: Send Discord Notification
+      run: |
+        python notify/send_discord.py \
+          --input prediction.json
