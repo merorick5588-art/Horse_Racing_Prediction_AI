@@ -1,3 +1,4 @@
+import sys
 import time
 import pandas as pd
 import random
@@ -18,10 +19,6 @@ from webdriver_manager.chrome import ChromeDriverManager
 
 # --- 設定 ---
 REQUEST_DELAY_SECONDS = 5 
-# 実行日の日付文字列。テストのため2025/12/07を使用します。
-TODAY_STR = "20251207" 
-# CSV保存先ディレクトリ
-OUTPUT_DIR = f'race_data_{TODAY_STR}'
 
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
@@ -34,6 +31,27 @@ NEWSPAPER_URL_TEMPLATE = "https://keibalab.jp/db/race/{race_id}/umabashira.html?
 
 RACE_LIST_ITEM_SELECTOR = "table.table-bordered a[href*='/db/race/']"
 HORSE_CONTAINER_SELECTOR = "table.yokobashiraTable tbody tr:has(td.umabanBox)"
+
+# ----------------------------------------
+# ■ 実行日（TODAY_STR）をコマンドライン引数から受け取る
+# ----------------------------------------
+
+def get_today_str():
+    """
+    実行例:
+        python step2_race_info_collect.py 20251207
+    引数なしなら今日の日付で自動設定
+    """
+    if len(sys.argv) >= 2:
+        arg = sys.argv[1]
+        if re.match(r"^\d{8}$", arg):
+            return arg
+        else:
+            print("日付はYYYYMMDD形式で指定してください")
+            sys.exit(1)
+    else:
+        # 引数なし → 今日
+        return datetime.now().strftime("%Y%m%d")
 
 # ----------------------------------------
 # ■ STEP1: レースID取得
@@ -103,6 +121,88 @@ def parse_corner_order(raw_text: str):
     nums = re.findall(r"(\d+)", raw_text)
     return nums[:4] if nums else []
 
+def extract_percent_only(s: str) -> str:
+    """
+    '8.7%[23]' → '8.7%'
+    '--' → ''
+    """
+    if not s:
+        return ""
+    m = re.search(r"([\d\.]+%)", s)
+    return m.group(1) if m else ""
+
+def legs_score(style: str) -> float:
+    if not style or len(style) != 4 or style == "◀◀◀◀":
+        return 0.0
+
+    weights = [1.0, 0.66, 0.33, 0.0]  # 左ほど前の脚質
+    scores = []
+
+    for ch, w in zip(style, weights):
+        if ch == "◀":
+            scores.append(w)
+
+    if not scores:
+        return 0.0
+
+    return round(sum(scores) / len(scores), 3)
+
+def extract_race_common_info(soup, race_id):
+    # レース番号 (例: "11R")
+    race_number = ""
+    num_block = soup.select_one(".icoRacedata")
+    if num_block:
+        race_number = num_block.get_text(strip=True)
+
+    # 日付・開催回 (例: "2025/12/7(日) 5回中山2日目")
+    date_info = ""
+    date_block = soup.select_one(".racedatabox p.bold")
+    if date_block:
+        date_info = date_block.get_text(" ", strip=True)
+
+    # レースタイトル (例: "ラピスラズリS")
+    race_title = ""
+    title_block = soup.select_one("h1.raceTitle")
+    if title_block:
+        race_title = title_block.get_text(" ", strip=True)
+
+    # 天気・馬場
+    weather = ""
+    track_condition = ""
+    wg = soup.select_one(".weather_ground ul")
+    if wg:
+        items = wg.select("li")
+        if len(items) >= 1:
+            weather = items[0].get_text(strip=True)
+        if len(items) >= 2:
+            track_condition = items[1].get_text(strip=True)
+
+    # 距離・頭数 (例: "芝1200m 16頭 15:25発走")
+    distance = ""
+    surface = ""
+    headcount = ""
+
+    info_list = soup.select("ul.classCourseSyokin li")
+    for li in info_list:
+        text = li.get_text(" ", strip=True)
+        m = re.search(r"(芝|ダ)(\d+)m\s+(\d+)頭", text)
+        if m:
+            surface = m.group(1)
+            distance = m.group(2)
+            headcount = m.group(3)
+            break
+
+    return {
+        "race_id": race_id,
+        "race_number": race_number,
+        "date_info": date_info,
+        "race_title": race_title,
+        "weather": weather,
+        "track_condition": track_condition,
+        "surface": surface,
+        "distance": distance,
+        "headcount": headcount
+    }
 
 # ----------------------------------------
 # ■ 前走詳細データ抽出（完全版）
@@ -114,7 +214,7 @@ def blank_prev():
         "corner_order": [], "field_size": "", "horse_num": "",
         "popularity": "", "time": "", "agari": "", "pace": "",
         "weight": "", "weight_diff": "", "jockey": "",
-        "margin": "", "opponent": ""
+        "margin": ""
     }
 
 def parse_prev_race(z):
@@ -193,8 +293,6 @@ def parse_prev_race(z):
     m_margin = re.search(r"\(([-\d\.]+)\)", info4)
     margin = m_margin.group(1) if m_margin else ""
 
-    m_op = re.search(r"\)\s*([^\s]+)", info4)
-    opponent = m_op.group(1) if m_op else ""
 
     return {
         "rank": rank,
@@ -213,8 +311,7 @@ def parse_prev_race(z):
         "weight": weight,
         "weight_diff": weight_diff,
         "jockey": jockey,
-        "margin": margin,
-        "opponent": opponent
+        "margin": margin
     }
 
 
@@ -275,7 +372,8 @@ def collect_and_format_race_data(race_urls, driver, wait):
 
             # 脚質（◁◁◀◀）
             legs_style = "".join([s.get_text("") for s in container.select("td.bameiBox .dbrunstyle2yoko span")])
-
+            # 数値化（0.0〜1.0）へ変換
+            legs_style_score = legs_score(legs_style)
             # ----------------------
             # 人気・オッズ・体重
             # ----------------------
@@ -328,14 +426,16 @@ def collect_and_format_race_data(race_urls, driver, wait):
                     label = label.strip()
                     value = value.strip()
 
+                    clean_value = extract_percent_only(value)
+
                     if label == "騎手":
-                        jockey_course_win_rate = value
+                        jockey_course_win_rate = clean_value
                     elif label == "馬番":
-                        horse_num_course_win_rate = value
+                        horse_num_course_win_rate = clean_value
                     elif label == "父馬":
-                        father_course_win_rate = value
+                        father_course_win_rate = clean_value
                     elif label == "コンビ":
-                        trainer_jockey_win_rate = value
+                        trainer_jockey_win_rate = clean_value
    
 
 
@@ -376,8 +476,6 @@ def collect_and_format_race_data(race_urls, driver, wait):
             # DataFrame用レコード
             # ----------------------
             data = {
-                "race_id": race_id,
-                "race_name": race_name,
                 "wakuban": wakuban,
                 "horse_number": horse_number,
                 "horse_name": horse_name,
@@ -385,7 +483,7 @@ def collect_and_format_race_data(race_urls, driver, wait):
                 "sex_age": sex_age,
                 "kankaku": kankaku,
                 "kinryou": kinryou,
-                "legs_style": legs_style,
+                "running_style_score_0to1": legs_style_score,
                 "popularity": popularity,
                 "odds": odds,
                 "horse_weight": horse_weight,
@@ -409,9 +507,14 @@ def collect_and_format_race_data(race_urls, driver, wait):
             df = pd.DataFrame(race_data)
             os.makedirs(OUTPUT_DIR, exist_ok=True)
             safe_race_name = re.sub(r'[\\/:*?"<>|]', "", race_name)
-            out_path = os.path.join(OUTPUT_DIR, f"{race_id}_{safe_race_name}.csv")
+            out_path = os.path.join(OUTPUT_DIR, f"{race_id}_{safe_race_name}_data.csv")
             df.to_csv(out_path, index=False, encoding="utf-8-sig")
             print("保存:", out_path)
+            common_info = extract_race_common_info(soup, race_id)
+            df_common = pd.DataFrame([common_info])
+            common_path = os.path.join(OUTPUT_DIR, f"{race_id}_{safe_race_name}_common.csv")
+            df_common.to_csv(common_path, index=False, encoding="utf-8-sig")
+            print("共通情報保存:", common_path)
 
 
 # ----------------------------------------
@@ -419,6 +522,9 @@ def collect_and_format_race_data(race_urls, driver, wait):
 # ----------------------------------------
 
 if __name__ == "__main__":
+
+    TODAY_STR = get_today_str()
+    OUTPUT_DIR = f"race_data_{TODAY_STR}"
     user_agent = random.choice(USER_AGENTS)
     options = Options()
     options.add_argument("--headless")

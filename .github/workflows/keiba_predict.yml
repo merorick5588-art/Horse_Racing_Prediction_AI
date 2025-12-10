@@ -1,59 +1,75 @@
-name: Keiba Prediction Pipeline
+name: Race Scraper + AI Prediction
 
 on:
-  schedule:
-    # 毎日 7:05 に実行（任意）
-    - cron: "5 22 * * *"   # JST 07:05
-  workflow_dispatch:
+  workflow_dispatch:   # 手動実行のみ
 
 jobs:
-  run-keiba:
+  scrape:
     runs-on: ubuntu-latest
 
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
 
     steps:
-    - name: Checkout repo
-      uses: actions/checkout@v4
 
-    - name: Setup Python
+    # ----------------------------------------
+    # ① ソース取得
+    # ----------------------------------------
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
       uses: actions/setup-python@v4
       with:
         python-version: "3.11"
 
     - name: Install dependencies
-      run: |
-        pip install -r requirements.txt
+      run: pip install -r requirements.txt
 
-    # --- ① 開催日判定 + スクレイピング ---
-    - name: Get race info
-      run: |
-        python scraper/get_race_info.py --date today --output race_info.json
 
-    # --- ② 騎手情報取得 ---
-    - name: Get jockey stats
+    # ----------------------------------------
+    # ② 実行日を取得（手動実行日のYYYYMMDD）
+    # ----------------------------------------
+    - name: Get Target Date
+      id: runtime
       run: |
-        python scraper/get_jockey_stats.py --input race_info.json --output race_with_jockey.json
+        export TZ="Asia/Tokyo"
+        TODAY=$(date +'%Y%m%d')
+        echo "TODAY=$TODAY" >> $GITHUB_ENV
+        echo "実行日 = $TODAY"
 
-    # --- ③ 整形 ---
-    - name: Merge and clean data
+
+    # ----------------------------------------
+    # ③ スクレイピング（全レースのCSV生成）
+    # ----------------------------------------
+    - name: Scrape Race Data
       run: |
-        python scraper/merge_and_clean.py \
-          --input race_with_jockey.json \
-          --output clean_data.json
+        python race_info_collect.py ${TODAY}
 
-    # --- ④ AI解析（GPT + Geminiを使用） ---
-    - name: Run AI predictions
+
+    # ----------------------------------------
+    # ④ AI解析用に整形
+    # 各レースごとに race_common.csv と race_detail_ai_ready.csv を生成
+    # ----------------------------------------
+    - name: Prepare AI Input
       run: |
-        python ai/ensemble.py \
-          --input clean_data.json \
-          --output prediction.json
+        python prepare_ai_input.py --input_dir race_data_${TODAY}
 
-    # --- ⑤ Discord 通知 ---
+
+    # ----------------------------------------
+    # ⑤ AI解析（GPT）
+    # 各レースフォルダをループして勝率推論
+    # ----------------------------------------
+    - name: Run AI Predictions
+      run: |
+        python ai_predict.py --base_dir race_data_${TODAY}
+
+
+    # ----------------------------------------
+    # ⑥ Discord通知（任意）
+    # prediction.csv をまとめて送信
+    # ----------------------------------------
     - name: Send Discord Notification
+      if: success()
       run: |
-        python notify/send_discord.py \
-          --input prediction.json
+        python send_discord.py --base_dir race_data_${TODAY}        
