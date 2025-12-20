@@ -61,12 +61,32 @@ jobs:
     # ⑤ AI解析（レースごとにループ）
     # aiready.csv → json ＋ prompt.txt
     # ----------------------------------------
-    - name: Run AI Predictions (time order)
+    # ----------------------------------------
+    # ⑤ AI解析（テスト用：1レースのみ）
+    # ----------------------------------------
+    - name: Run AI Predictions (3 races only)
       run: |
-        for csv in $(ls race_data_${TODAY}/*_aiready.csv | sort); do
-          echo "AI解析（時刻順）: $csv"
-          python predict_race_ai.py "$csv" gpt-4.0-mini
+        BASE_DIR="race_data_${TODAY}"
+
+        # 時刻順に3レース取得
+        RACES=$(ls ${BASE_DIR} | sort | head -n 3)
+
+        echo "AI解析対象レース:"
+        echo "${RACES}"
+
+        for RACE in ${RACES}; do
+          echo "----- ${RACE} -----"
+          python ai_predict.py \
+            --base_dir ${BASE_DIR}/${RACE} gpt-3.5-turbo
         done
+
+
+    #- name: Run AI Predictions (time order)
+    #  run: |
+    #    for csv in $(ls race_data_${TODAY}/*_aiready.csv | sort); do
+    #      echo "AI解析（時刻順）: $csv"
+    #      python predict_race_ai.py "$csv" gpt-4.0-mini
+    #    done
 
 
 
@@ -74,13 +94,30 @@ jobs:
     # ⑥ Discord通知（レースごと）
     # json + aiready.csv をペアで送信
     # ----------------------------------------
-    - name: Send Discord Notifications (time order)
+
+    - name: Send Discord Notification (3 races only)
       if: success()
       run: |
-        for json in $(ls race_data_${TODAY}/*.json | sort); do
-          csv="${json%.json}_aiready.csv"
-          if [ -f "$csv" ]; then
-            echo "通知（時刻順）: $json"
-            python notify_discord.py "$json" "$csv"
-          fi
+        BASE_DIR="race_data_${TODAY}"
+
+        RACES=$(ls ${BASE_DIR} | sort | head -n 3)
+
+        echo "通知対象レース:"
+        echo "${RACES}"
+
+        for RACE in ${RACES}; do
+          python send_discord.py \
+            --base_dir ${BASE_DIR}/${RACE}
         done
+
+
+    #- name: Send Discord Notifications (time order)
+    #  if: success()
+    #  run: |
+    #    for json in $(ls race_data_${TODAY}/*.json | sort); do
+    #      csv="${json%.json}_aiready.csv"
+    #      if [ -f "$csv" ]; then
+    #        echo "通知（時刻順）: $json"
+    #        python notify_discord.py "$json" "$csv"
+    #      fi
+    #    done

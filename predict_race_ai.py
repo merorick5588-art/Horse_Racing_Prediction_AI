@@ -112,6 +112,16 @@ distance: {common_info.get('distance')}
 def ask_gpt(prompt: str, model_name: str) -> list:
     client = OpenAI()
 
+    # =========================
+    # モデル別 generation 設定
+    # =========================
+    kwargs = {}
+
+    if not model_name.startswith("gpt-5"):
+        kwargs["temperature"] = 0.7
+    else:
+        kwargs["temperature"] = 0.2
+
     resp = client.responses.create(
         model=model_name,
         input=[
@@ -124,8 +134,9 @@ def ask_gpt(prompt: str, model_name: str) -> list:
                 "content": prompt
             }
         ],
-        temperature=0.2
+        **kwargs
     )
+
 
     text = resp.output_text
 
