@@ -95,28 +95,25 @@ jobs:
     # json + aiready.csv をペアで送信
     # ----------------------------------------
 
-    - name: Send Discord Notification (3 races only, time order)
+    - name: Send Discord Notification (3 races only)
       if: success()
       run: |
         BASE_DIR="race_data_${TODAY}"
 
-        # ai_ready.csv を基準に3レース取得
-        RACES=$(ls ${BASE_DIR}/*_ai_ready.csv | sort | head -n 3)
-
         echo "通知対象レース:"
-        echo "${RACES}"
+        ls "${BASE_DIR}"/*_ai_ready.csv | sort | head -n 3
 
-        for CSV in ${RACES}; do
-          PREFIX="${CSV%_ai_ready.csv}"
-          JSON="${PREFIX}.json"
+        for csv in $(ls "${BASE_DIR}"/*_ai_ready.csv | sort | head -n 3); do
+          json="${csv%.csv}.json"
 
-          if [ -f "$JSON" ]; then
-            echo "通知: $(basename "$JSON")"
-            python notify_discord.py "$JSON" "$CSV"
+          if [ -f "$json" ]; then
+            echo "通知: $json"
+            python notify_discord.py "$json" "$csv"
           else
-            echo "⚠ json が存在しないためスキップ: $JSON"
+            echo "⚠ json が存在しないためスキップ: $json"
           fi
         done
+
 
 
 
@@ -124,7 +121,7 @@ jobs:
     #  if: success()
     #  run: |
     #    for json in $(ls race_data_${TODAY}/*.json | sort); do
-    #      csv="${json%.json}_aiready.csv"
+    #      csv="${json%.json}.csv"
     #      if [ -f "$csv" ]; then
     #        echo "通知（時刻順）: $json"
     #        python notify_discord.py "$json" "$csv"
