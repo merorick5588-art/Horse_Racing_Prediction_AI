@@ -76,7 +76,7 @@ jobs:
 
         for RACE in ${RACES}; do
           echo "----- ${RACE} -----"
-          python ai_predict.py \
+          python predict_race_ai.py \
             --base_dir ${BASE_DIR}/${RACE} gpt-3.5-turbo
         done
 
