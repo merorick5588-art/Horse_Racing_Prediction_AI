@@ -64,21 +64,21 @@ jobs:
     # ----------------------------------------
     # ⑤ AI解析（テスト用：1レースのみ）
     # ----------------------------------------
-    - name: Run AI Predictions (3 races only)
+    - name: Run AI Predictions (3 races only, time order)
       run: |
         BASE_DIR="race_data_${TODAY}"
 
-        # 時刻順に3レース取得
-        RACES=$(ls ${BASE_DIR} | sort | head -n 3)
+        # ai_ready.csv を時刻順で3レース取得
+        RACES=$(ls ${BASE_DIR}/*_ai_ready.csv | sort | head -n 3)
 
         echo "AI解析対象レース:"
         echo "${RACES}"
 
-        for RACE in ${RACES}; do
-          echo "----- ${RACE} -----"
-          python predict_race_ai.py \
-            --base_dir ${BASE_DIR}/${RACE} gpt-3.5-turbo
+        for CSV in ${RACES}; do
+          echo "----- $(basename "$CSV") -----"
+          python predict_race_ai.py "$CSV" gpt-3.5-turbo
         done
+
 
 
     #- name: Run AI Predictions (time order)
@@ -95,20 +95,29 @@ jobs:
     # json + aiready.csv をペアで送信
     # ----------------------------------------
 
-    - name: Send Discord Notification (3 races only)
+    - name: Send Discord Notification (3 races only, time order)
       if: success()
       run: |
         BASE_DIR="race_data_${TODAY}"
 
-        RACES=$(ls ${BASE_DIR} | sort | head -n 3)
+        # ai_ready.csv を基準に3レース取得
+        RACES=$(ls ${BASE_DIR}/*_ai_ready.csv | sort | head -n 3)
 
         echo "通知対象レース:"
         echo "${RACES}"
 
-        for RACE in ${RACES}; do
-          python send_discord.py \
-            --base_dir ${BASE_DIR}/${RACE}
+        for CSV in ${RACES}; do
+          PREFIX="${CSV%_ai_ready.csv}"
+          JSON="${PREFIX}.json"
+
+          if [ -f "$JSON" ]; then
+            echo "通知: $(basename "$JSON")"
+            python notify_discord.py "$JSON" "$CSV"
+          else
+            echo "⚠ json が存在しないためスキップ: $JSON"
+          fi
         done
+
 
 
     #- name: Send Discord Notifications (time order)
