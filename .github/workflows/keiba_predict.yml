@@ -1,10 +1,10 @@
-name: Race Scraper + AI Prediction
+name: Race Scraper + AI Prediction + Discord
 
 on:
-  workflow_dispatch:   # 手動実行のみ
+  workflow_dispatch:   # 手動実行
 
 jobs:
-  scrape:
+  run:
     runs-on: ubuntu-latest
 
     env:
@@ -24,23 +24,25 @@ jobs:
         python-version: "3.11"
 
     - name: Install dependencies
-      run: pip install -r requirements.txt
+      run: |
+        pip install --upgrade pip
+        pip install -r requirements.txt
 
 
     # ----------------------------------------
-    # ② 実行日を取得（手動実行日のYYYYMMDD）
+    # ② 実行日取得（JST）
     # ----------------------------------------
-    - name: Get Target Date
-      id: runtime
+    - name: Get Target Date (JST)
       run: |
         export TZ="Asia/Tokyo"
         TODAY=$(date +'%Y%m%d')
         echo "TODAY=$TODAY" >> $GITHUB_ENV
-        echo "実行日 = $TODAY"
+        echo "TARGET DATE = $TODAY"
 
 
     # ----------------------------------------
-    # ③ スクレイピング（全レースのCSV生成）
+    # ③ スクレイピング
+    # race_data_YYYYMMDD/ 以下にCSV生成
     # ----------------------------------------
     - name: Scrape Race Data
       run: |
@@ -48,28 +50,37 @@ jobs:
 
 
     # ----------------------------------------
-    # ④ AI解析用に整形
-    # 各レースごとに race_common.csv と race_detail_ai_ready.csv を生成
+    # ④ AI用CSV整形（aiready.csv生成）
     # ----------------------------------------
     - name: Prepare AI Input
       run: |
-        python prepare_ai_input.py --input_dir race_data_${TODAY}
+        python prepare_ai_input.py ${TODAY}
 
 
     # ----------------------------------------
-    # ⑤ AI解析（GPT）
-    # 各レースフォルダをループして勝率推論
+    # ⑤ AI解析（レースごとにループ）
+    # aiready.csv → json ＋ prompt.txt
     # ----------------------------------------
-    - name: Run AI Predictions
+    - name: Run AI Predictions (time order)
       run: |
-        python ai_predict.py --base_dir race_data_${TODAY}
+        for csv in $(ls race_data_${TODAY}/*_aiready.csv | sort); do
+          echo "AI解析（時刻順）: $csv"
+          python predict_race_ai.py "$csv" gpt-4.0-mini
+        done
+
 
 
     # ----------------------------------------
-    # ⑥ Discord通知（任意）
-    # prediction.csv をまとめて送信
+    # ⑥ Discord通知（レースごと）
+    # json + aiready.csv をペアで送信
     # ----------------------------------------
-    - name: Send Discord Notification
+    - name: Send Discord Notifications (time order)
       if: success()
       run: |
-        python send_discord.py --base_dir race_data_${TODAY}        
+        for json in $(ls race_data_${TODAY}/*.json | sort); do
+          csv="${json%.json}_aiready.csv"
+          if [ -f "$csv" ]; then
+            echo "通知（時刻順）: $json"
+            python notify_discord.py "$json" "$csv"
+          fi
+        done
