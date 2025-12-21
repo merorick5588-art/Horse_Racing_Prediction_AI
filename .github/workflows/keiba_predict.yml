@@ -65,7 +65,7 @@ jobs:
       run: |
         for csv in $(ls race_data_${TODAY}/*_aiready.csv | sort); do
         echo "AI解析（時刻順）: $csv"
-          python predict_race_ai.py "$csv" gpt-4.0-mini
+          python predict_race_ai.py "$csv" 
         done
 
 
