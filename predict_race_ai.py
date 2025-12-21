@@ -72,15 +72,22 @@ def split_common_and_horses(df: pd.DataFrame):
 def build_prompt(common_info: dict, horses: list) -> str:
     prompt = f"""
 あなたは世界トップレベルの日本のJRA競馬予想家です。
-添付のCSVデータをもとに、
-各馬の **勝率（win_rate）** と **連対率（place_rate）** を 0〜100% で予測してください。
+添付のCSVデータをもとに、各馬について以下3つの指標を予測してください。
+
+- win_rate : 1着になる可能性の強さ
+- top2_rate : 2着以内に入る可能性の強さ
+- top3_rate : 3着以内に入る可能性の強さ
 
 ■ 制約
 - オッズ・人気はデータに含まれていません。
 - 数値の過剰推測は禁止。
-- すべての馬に対して必ず win_rate と place_rate を返す。
-- 出力は勝率が高い順に返す。
-- 勝率が低く連体率が高いなどのケースも許容すること。
+- すべての馬に対して必ず3つの数値を返す。
+- 出力はwin_rateが高い順に返す。
+- win_rate / top2_rate / top3_rate は論理的に
+  「1着 ⊂ 2着以内 ⊂ 3着以内」の関係を満たすこと。
+- ただし、勝ち切れないが着内率が高い馬など、
+  勝率が低く着内率が高いケースは積極的に表現してよい。
+- 数値は相対評価でよく、合計値や正規化は考慮しなくてよい。
 
 ■ 共通情報
 date_info: "{common_info.get('date_info')}"
@@ -99,7 +106,8 @@ distance: {common_info.get('distance')}
     "horse_number": 馬番,
     "horse_name": "馬名",
     "win_rate": 数値,
-    "place_rate": 数値
+    "top2_rate": 数値,
+    "top3_rate": 数値
   }}
 ]
 """
@@ -147,7 +155,22 @@ def ask_gpt(prompt: str, model_name: str) -> list:
         text = text[text.find("["): text.rfind("]") + 1]
         return json.loads(text)
 
+# =========================
+# 正規化処理 ★追加
+# =========================
+def normalize_rates(prediction: list) -> list:
+    def norm(key, total_target):
+        total = sum(p.get(key, 0) for p in prediction)
+        if total == 0:
+            return
+        for p in prediction:
+            p[key] = round(p[key] / total * total_target, 2)
 
+    norm("win_rate", 100.0)
+    norm("top2_rate", 200.0)
+    norm("top3_rate", 300.0)
+
+    return prediction
 # =========================
 # 出力パス生成
 # =========================
@@ -184,6 +207,9 @@ def main(csv_path: str, model_name: str):
 
     # --- AI予測 ---
     prediction = ask_gpt(prompt, model_name)
+
+    # ★ 正規化
+    prediction = normalize_rates(prediction)
 
     # 勝率降順で整列
     prediction_sorted = sorted(prediction, key=lambda x: -x["win_rate"])

@@ -22,9 +22,49 @@ COURSE_CODE_MAP = {
 }
 DISCORD_WEBHOOK_URL = None
 
+# JRA枠番カラー対応（整数キーに変更）
+WAKU_COLOR_MAP = {
+    1: "⬜",
+    2: "⬛",
+    3: "🟥",
+    4: "🟦",
+    5: "🟨",
+    6: "🟩",
+    7: "🟧",
+    8: "🟪",
+}
+
+
 # ==============================
 # ユーティリティ
 # ==============================
+
+def get_waku_number(horse_number: int, total_horses: int) -> int:
+    """
+    馬番と頭数からJRA枠番を推定
+    """
+    if total_horses <= 8:
+        # 馬番=枠番
+        return horse_number
+    elif total_horses <= 16:
+        # 16頭までなら2頭ずつ枠に割り振り
+        return (horse_number + 1) // 2
+    elif total_horses == 17:
+        # 17頭立ては最後の枠に3頭
+        if horse_number <= 16:
+            return (horse_number + 1) // 2
+        else:
+            return 8
+    elif total_horses == 18:
+        # 18頭立ては最後の枠に3頭
+        if horse_number <= 16:
+            return (horse_number + 1) // 2
+        else:
+            return 8
+    else:
+        # それ以上は簡易計算
+        return (horse_number - 1) * 8 // total_horses + 1
+
 def extract_race_number_from_filename(filename: str) -> str:
     """
     例: 202512200601_サラ系2歳未勝利.json
@@ -62,13 +102,17 @@ def load_predictions(json_path: str) -> list:
 # ==============================
 def format_prediction_table(predictions: list) -> str:
     lines = []
-
+    total_horses = len(predictions)
     for i, p in enumerate(predictions, start=1):
         prefix = f"{i:02d}位"
+        waku_num = get_waku_number(p["horse_number"], total_horses)
+        waku_color = WAKU_COLOR_MAP.get(waku_num, "⬜")
 
         lines.append(
-            f"{prefix}  {p['horse_number']} {p['horse_name']}\n"
-            f"勝率: {p['win_rate']:.1f}% / 連対率: {p['place_rate']:.1f}%"
+            f"{prefix} {waku_color} {p['horse_number']} {p['horse_name']}\n"
+            f"勝率: {p['win_rate']:.1f}% / "
+            f"連対率: {p['top2_rate']:.1f}% / "
+            f"3着内: {p['top3_rate']:.1f}%"
         )
         lines.append("")
 
