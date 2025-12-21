@@ -22,9 +22,6 @@ COURSE_CODE_MAP = {
 }
 DISCORD_WEBHOOK_URL = None
 
-if not DISCORD_WEBHOOK_URL:
-    raise RuntimeError("DISCORD_WEBHOOK_URL が環境変数に設定されていません")
-
 # ==============================
 # ユーティリティ
 # ==============================
@@ -114,7 +111,7 @@ def main():
 
     json_path = sys.argv[1]
     csv_path = sys.argv[2]
-    
+
     # --- 開催場判定 ---
     course_code = extract_course_code_from_filename(json_path)
     if course_code not in COURSE_CODE_MAP:
