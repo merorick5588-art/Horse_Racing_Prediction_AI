@@ -61,32 +61,12 @@ jobs:
     # ⑤ AI解析（レースごとにループ）
     # aiready.csv → json ＋ prompt.txt
     # ----------------------------------------
-    # ----------------------------------------
-    # ⑤ AI解析（テスト用：1レースのみ）
-    # ----------------------------------------
-    - name: Run AI Predictions (3 races only, time order)
+    - name: Run AI Predictions (time order)
       run: |
-        BASE_DIR="race_data_${TODAY}"
-
-        # ai_ready.csv を時刻順で3レース取得
-        RACES=$(ls ${BASE_DIR}/*_aiready.csv | sort | head -n 3)
-
-        echo "AI解析対象レース:"
-        echo "${RACES}"
-
-        for CSV in ${RACES}; do
-          echo "----- $(basename "$CSV") -----"
-          python predict_race_ai.py "$CSV" gpt-3.5-turbo
+        for csv in $(ls race_data_${TODAY}/*_aiready.csv | sort); do
+        echo "AI解析（時刻順）: $csv"
+          python predict_race_ai.py "$csv" gpt-4.0-mini
         done
-
-
-
-    #- name: Run AI Predictions (time order)
-    #  run: |
-    #    for csv in $(ls race_data_${TODAY}/*_aiready.csv | sort); do
-    #      echo "AI解析（時刻順）: $csv"
-    #      python predict_race_ai.py "$csv" gpt-4.0-mini
-    #    done
 
 
 
@@ -94,18 +74,14 @@ jobs:
     # ⑥ Discord通知（レースごと）
     # json + aiready.csv をペアで送信
     # ----------------------------------------
-
-    - name: Send Discord Notification (3 races only)
+    - name: Send Discord Notifications (time order)
       if: success()
       run: |
         BASE_DIR="race_data_${TODAY}"
-
         echo "通知対象レース:"
-        ls "${BASE_DIR}"/*_aiready.csv | sort | head -n 3
-
-        for csv in $(ls "${BASE_DIR}"/*_aiready.csv | sort | head -n 3); do
+        ls "${BASE_DIR}"/*_aiready.csv | sort
+        for csv in $(ls "${BASE_DIR}"/*_aiready.csv | sort); do
           json="${csv%.csv}.json"
-
           if [ -f "$json" ]; then
             echo "通知: $json"
             python notify_discord.py "$json" "$csv"
@@ -113,17 +89,3 @@ jobs:
             echo "⚠ json が存在しないためスキップ: $json"
           fi
         done
-
-
-
-
-    #- name: Send Discord Notifications (time order)
-    #  if: success()
-    #  run: |
-    #    for json in $(ls race_data_${TODAY}/*.json | sort); do
-    #      csv="${json%.json}.csv"
-    #      if [ -f "$csv" ]; then
-    #        echo "通知（時刻順）: $json"
-    #        python notify_discord.py "$json" "$csv"
-    #      fi
-    #    done
