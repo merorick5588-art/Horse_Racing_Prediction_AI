@@ -69,7 +69,7 @@ jobs:
         BASE_DIR="race_data_${TODAY}"
 
         # ai_ready.csv を時刻順で3レース取得
-        RACES=$(ls ${BASE_DIR}/*_ai_ready.csv | sort | head -n 3)
+        RACES=$(ls ${BASE_DIR}/*_aiready.csv | sort | head -n 3)
 
         echo "AI解析対象レース:"
         echo "${RACES}"
@@ -101,9 +101,9 @@ jobs:
         BASE_DIR="race_data_${TODAY}"
 
         echo "通知対象レース:"
-        ls "${BASE_DIR}"/*_ai_ready.csv | sort | head -n 3
+        ls "${BASE_DIR}"/*_aiready.csv | sort | head -n 3
 
-        for csv in $(ls "${BASE_DIR}"/*_ai_ready.csv | sort | head -n 3); do
+        for csv in $(ls "${BASE_DIR}"/*_aiready.csv | sort | head -n 3); do
           json="${csv%.csv}.json"
 
           if [ -f "$json" ]; then
