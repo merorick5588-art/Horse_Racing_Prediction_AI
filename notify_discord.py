@@ -7,7 +7,20 @@ import requests
 # ==============================
 # 設定
 # ==============================
-DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
+
+COURSE_CODE_MAP = {
+    "01": "SAPPORO",
+    "02": "HAKODATE",
+    "03": "FUKUSHIMA",
+    "04": "NIIGATA",
+    "05": "TOKYO",
+    "06": "NAKAYAMA",
+    "07": "CHUKYO",
+    "08": "KYOTO",
+    "09": "HANSHIN",
+    "10": "KOKURA",
+}
+DISCORD_WEBHOOK_URL = None
 
 if not DISCORD_WEBHOOK_URL:
     raise RuntimeError("DISCORD_WEBHOOK_URL が環境変数に設定されていません")
@@ -25,6 +38,14 @@ def extract_race_number_from_filename(filename: str) -> str:
     race_no = race_id[-2:]
     return f"{race_no}R"
 
+def extract_course_code_from_filename(filename: str) -> str:
+    """
+    例: 202512200601_サラ系2歳未勝利.json
+    → 下3,4桁 = 06
+    """
+    base = os.path.basename(filename)
+    race_id = base.split("_")[0]
+    return race_id[8:10]
 
 def load_common_info(csv_path: str) -> dict:
     df = pd.read_csv(csv_path)
@@ -93,7 +114,20 @@ def main():
 
     json_path = sys.argv[1]
     csv_path = sys.argv[2]
+    
+    # --- 開催場判定 ---
+    course_code = extract_course_code_from_filename(json_path)
+    if course_code not in COURSE_CODE_MAP:
+        raise RuntimeError(f"未対応の開催場コード: {course_code}")
 
+    env_key = f"DISCORD_WEBHOOK_URL_{COURSE_CODE_MAP[course_code]}"
+    global DISCORD_WEBHOOK_URL
+    DISCORD_WEBHOOK_URL = os.environ.get(env_key)
+
+    if not DISCORD_WEBHOOK_URL:
+        raise RuntimeError(f"{env_key} が環境変数に設定されていません")
+
+    # --- データ読込 ---
     race_number = extract_race_number_from_filename(json_path)
     common_info = load_common_info(csv_path)
     predictions = load_predictions(json_path)
