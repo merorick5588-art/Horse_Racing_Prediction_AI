@@ -153,8 +153,7 @@ def ask_gpt(prompt: str, model_name: str) -> list:
 # =========================
 def build_base_name(csv_path: str) -> str:
     base = os.path.basename(csv_path)
-    if base.endswith("_aiready.csv"):
-        return base.replace("_aiready.csv", "")
+
     return os.path.splitext(base)[0]
 
 
@@ -177,11 +176,11 @@ def main(csv_path: str, model_name: str):
     out_dir = os.path.dirname(csv_path)
 
     # --- プロンプトTXT出力（テスト用） ---
-    prompt_path = os.path.join(out_dir, f"{base_name}_prompt.txt")
-    with open(prompt_path, "w", encoding="utf-8") as f:
-        f.write(prompt)
+    #prompt_path = os.path.join(out_dir, f"{base_name}_prompt.txt")
+    #with open(prompt_path, "w", encoding="utf-8") as f:
+    #    f.write(prompt)
 
-    print(f"[OK] プロンプト出力: {prompt_path}")
+    #print(f"[OK] プロンプト出力: {prompt_path}")
 
     # --- AI予測 ---
     prediction = ask_gpt(prompt, model_name)
