@@ -41,29 +41,29 @@ WAKU_COLOR_MAP = {
 
 def get_waku_number(horse_number: int, total_horses: int) -> int:
     """
-    馬番と頭数からJRA枠番を推定
+    JRAの枠番割当ルールに基づき、馬番から枠番を算出する
     """
     if total_horses <= 8:
-        # 馬番=枠番
         return horse_number
-    elif total_horses <= 16:
-        # 16頭までなら2頭ずつ枠に割り振り
-        return (horse_number + 1) // 2
-    elif total_horses == 17:
-        # 17頭立ては最後の枠に3頭
-        if horse_number <= 16:
-            return (horse_number + 1) // 2
-        else:
-            return 8
-    elif total_horses == 18:
-        # 18頭立ては最後の枠に3頭
-        if horse_number <= 16:
-            return (horse_number + 1) // 2
-        else:
-            return 8
+
+    # 各枠の最低頭数(base)と、多めに割り振る枠の数(extras)を計算
+    base_count = total_horses // 8
+    extras = total_horses % 8
+
+    # 多頭数になる枠の境界線（この枠番号より大きい枠は base_count + 1 頭入る）
+    # 例：10頭立てなら extras=2 なので、7枠と8枠が2頭になる。境界は 8-2 = 6。
+    boundary_frame = 8 - extras
+
+    # 境界線までの枠に入っている馬の総数
+    boundary_horse_count = boundary_frame * base_count
+
+    if horse_number <= boundary_horse_count:
+        # 少ない方の頭数（base_count）で割る
+        return (horse_number - 1) // base_count + 1
     else:
-        # それ以上は簡易計算
-        return (horse_number - 1) * 8 // total_horses + 1
+        # 境界以降の馬番。多い方の頭数（base_count + 1）で割る
+        offset_horse_num = horse_number - boundary_horse_count
+        return boundary_frame + (offset_horse_num - 1) // (base_count + 1) + 1
 
 def extract_race_number_from_filename(filename: str) -> str:
     """

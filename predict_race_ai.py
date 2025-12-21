@@ -81,8 +81,9 @@ def build_prompt(common_info: dict, horses: list) -> str:
 ■ 制約
 - オッズ・人気はデータに含まれていません。
 - 数値の過剰推測は禁止。
-- すべての馬に対して必ず3つの数値を返す。
-- 出力はwin_rateが高い順に返す。
+- 出走馬全てについて必ず3つの数値を返してください。
+- JSONリストは馬番（horse_number）順に並べてください。
+- JSON形式以外の文字列は一切返さないでください。
 - win_rate / top2_rate / top3_rate は論理的に
   「1着 ⊂ 2着以内 ⊂ 3着以内」の関係を満たすこと。
 - ただし、勝ち切れないが着内率が高い馬など、
@@ -199,11 +200,11 @@ def main(csv_path: str, model_name: str):
     out_dir = os.path.dirname(csv_path)
 
     # --- プロンプトTXT出力（テスト用） ---
-    #prompt_path = os.path.join(out_dir, f"{base_name}_prompt.txt")
-    #with open(prompt_path, "w", encoding="utf-8") as f:
-    #    f.write(prompt)
+    prompt_path = os.path.join(out_dir, f"{base_name}_prompt.txt")
+    with open(prompt_path, "w", encoding="utf-8") as f:
+        f.write(prompt)
 
-    #print(f"[OK] プロンプト出力: {prompt_path}")
+    print(f"[OK] プロンプト出力: {prompt_path}")
 
     # --- AI予測 ---
     prediction = ask_gpt(prompt, model_name)
