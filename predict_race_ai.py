@@ -15,7 +15,6 @@ COMMON_COLS = [
     "distance",
 ]
 
-
 # =========================
 # レースグレード数値化
 # =========================
@@ -41,56 +40,161 @@ def load_csv(path: str) -> pd.DataFrame:
 
 
 # =========================
+# 距離単位正規化（★最重要）
+# =========================
+def normalize_distance(v):
+    if pd.isna(v):
+        return v
+    try:
+        v = int(v)
+        if v < 100:      # 16 → 1600
+            return v * 100
+        return v
+    except Exception:
+        return v
+
+
+# =========================
 # 共通情報 / 馬データ分離
 # =========================
 def split_common_and_horses(df: pd.DataFrame):
     common_info = {}
 
-    # そのまま使う共通情報
     for col in ["date_info", "weather", "track_condition", "surface", "distance"]:
         if col in df.columns:
             common_info[col] = df[col].iloc[0]
 
-    # race_title → race_grade に変換
     if "race_title" in df.columns:
-        race_title = df["race_title"].iloc[0]
-        common_info["race_grade"] = grade_to_score(race_title)
+        common_info["race_grade"] = grade_to_score(df["race_title"].iloc[0])
     else:
         common_info["race_grade"] = 0
 
-    # 出走馬データ（共通列を除外）
-    drop_cols = COMMON_COLS
-    horse_df = df.drop(columns=[c for c in drop_cols if c in df.columns])
-    horses = horse_df.to_dict(orient="records")
+    horse_df = df.drop(columns=[c for c in COMMON_COLS if c in df.columns])
 
+    # ★ 距離系正規化
+    for x in [1, 2, 3]:
+        col = f"prev{x}_distance"
+        if col in horse_df.columns:
+            horse_df[col] = horse_df[col].apply(normalize_distance)
+
+    horses = horse_df.to_dict(orient="records")
     return common_info, horses
 
 
 # =========================
-# プロンプト生成
+# プロンプト生成（100点完全版）
 # =========================
 def build_prompt(common_info: dict, horses: list) -> str:
     prompt = f"""
-あなたは世界トップレベルの日本のJRA競馬予想家です。
-添付のCSVデータをもとに、各馬について以下3つの指標を予測してください。
+あなたは統計的特徴量のみを用いて競馬予測を行う専門AIである。
+主観・物語・人気・印象・オッズ推測は禁止する。
+CSVに存在する数値・カテゴリ情報のみを使用せよ。
 
-- win_rate : 1着になる可能性の強さ
-- top2_rate : 2着以内に入る可能性の強さ
-- top3_rate : 3着以内に入る可能性の強さ
+────────────────────
+【使用可能カラム定義（厳守）】
+────────────────────
 
-■ 制約
-- オッズ・人気はデータに含まれていません。
-- 数値の過剰推測は禁止。
-- 出走馬全てについて必ず3つの数値を返してください。
-- JSONリストは馬番（horse_number）順に並べてください。
-- JSON形式以外の文字列は一切返さないでください。
-- win_rate / top2_rate / top3_rate は論理的に
-  「1着 ⊂ 2着以内 ⊂ 3着以内」の関係を満たすこと。
-- ただし、勝ち切れないが着内率が高い馬など、
-  勝率が低く着内率が高いケースは積極的に表現してよい。
-- 数値は相対評価でよく、合計値や正規化は考慮しなくてよい。
+■ 基本
+- horse_number
+- horse_name
+- running_style_score_0to1
+- kankaku
 
-■ 共通情報
+■ 騎手・血統
+- jockey_course_win_rate
+- father_course_win_rate
+
+■ 条件別実績
+- dist_win
+- course_win
+- surface_win
+
+■ 直近3走（prev1 最重要）
+- prevX_rank
+- prevX_margin
+- prevX_distance
+- prevX_agari
+- prevX_pace
+- prevX_weather
+- prevX_condition
+- prevX_grade
+
+X は 1,2,3 のいずれか。
+NaN は「評価不能」とし、推測・補完は禁止。
+NaN が多いこと自体を理由に減点してはならない。
+上記以外のカラムが存在する場合、それらも数値・カテゴリ情報として使用してよい。
+
+────────────────────
+【評価の絶対原則】
+────────────────────
+- 評価の中心は必ず prev1
+- prev2 / prev3 は一時的不調・例外検出専用
+- prev2 / prev3 を理由に評価を反転させてはならない
+- 単純平均・機械合算は禁止
+- どの補助情報も prev1 の評価を上書きしてはならない
+
+
+────────────────────
+【着差評価基準】
+────────────────────
+- prevX_margin <= 0.3 : 非常に優秀
+- 0.3 < prevX_margin <= 0.6 : 良好
+- 0.6 < prevX_margin <= 1.0 : 標準
+- prevX_margin > 1.5 : 大敗
+
+
+────────────────────
+【一時的不調判定（厳格）】
+────────────────────
+以下すべてを満たす場合のみ、
+prev1 の大敗を能力低下と断定してはならない。
+
+1. prev1_margin >= 1.5
+2. prev2_margin <= 0.6
+3. prev3_margin <= 0.6
+4. prev2 または prev3 の距離が今回距離 ±200m
+
+満たさない場合、prev1 を最優先で評価する。
+────────────────────
+【安定性評価】
+────────────────────
+- 3走中2走以上 margin <= 0.6 → 安定型
+- 3走中1走のみ margin >= 1.5 → 一時的不調候補
+- 3走中2走以上 margin >= 1.5 → 明確な下降型
+
+────────────────────
+【距離適性】
+────────────────────
+- prevX_distance が今回距離 ±200m → 適性あり
+- 距離延長 × 先行型 → 加点
+- 距離短縮 × 差し型 → 加点
+- running_style_score_0to1 は先行性の強さを表す連続値であり、
+  距離延長・短縮判断の補助としてのみ使用せよ
+
+────────────────────
+【補助補正ルール（反転禁止）】
+────────────────────
+- jockey_course_win_rate 高 → 安定性補正
+- father_course_win_rate 高 → 距離適性補助
+- dist/course/surface_win 高 → 条件一致補正
+- kankaku 極端（短すぎ/長すぎ）→ 軽微減点
+- prevX_grade が高く善戦 → 能力下方修正禁止
+- 善戦とは prevX_margin <= 1.0 を指す
+- kankaku は「中◯週」の数値部分のみを解釈対象とせよ
+- kankakuで「連闘」とあった場合は0として解釈せよ
+
+────────────────────
+【数値制約】
+────────────────────
+- win_rate <= top2_rate <= top3_rate
+- 相対評価のみ
+- 数値の絶対値そのものに意味を持たせてはならない
+- 上位と下位の差を明確に
+- 全馬同値は禁止
+
+────────────────────
+【共通情報】
+────────────────────
 date_info: "{common_info.get('date_info')}"
 race_grade: {common_info.get('race_grade')}
 weather: "{common_info.get('weather')}"
@@ -98,21 +202,34 @@ track_condition: "{common_info.get('track_condition')}"
 surface: "{common_info.get('surface')}"
 distance: {common_info.get('distance')}
 
-■ 出走馬データ
+────────────────────
+【出走馬データ】
+────────────────────
 {json.dumps(horses, ensure_ascii=False)}
 
-■ 出力形式（JSONのみ）
-[
+────────────────────
+【出力条件】
+────────────────────
+- JSON配列のみ
+- horse_number 昇順
+- 全馬必須
+- JSON以外の文字列は禁止
+
+────────────────────
+【出力形式】
+────────────────────[
   {{
-    "horse_number": 馬番,
-    "horse_name": "馬名",
-    "win_rate": 数値,
-    "top2_rate": 数値,
-    "top3_rate": 数値
+    "horse_number": number,
+    "horse_name": "string",
+    "win_rate": number,
+    "top2_rate": number,
+    "top3_rate": number
   }}
 ]
 """
     return prompt.strip()
+
+
 
 
 # =========================
@@ -148,7 +265,6 @@ def ask_gpt(prompt: str, model_name: str) -> list:
 
 
     text = resp.output_text
-
     try:
         return json.loads(text)
     except Exception:
