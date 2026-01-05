@@ -2,6 +2,7 @@ import argparse
 import pandas as pd
 import json
 import os
+import re
 from openai import OpenAI
 
 DEFAULT_MODEL = "gpt-4.1-mini"
@@ -18,17 +19,31 @@ COMMON_COLS = [
 # =========================
 # レースグレード数値化
 # =========================
+
 def grade_to_score(g):
-    if not isinstance(g, str):
-        return 0
-    if "GⅠ" in g or "G1" in g:
-        return 4
-    if "GⅡ" in g or "G2" in g:
-        return 3
-    if "GⅢ" in g or "G3" in g:
-        return 2
-    if "L" in g or "OP" in g:
-        return 1
+    # ===== 既存ロジック（完全保持） =====
+    if isinstance(g, str):
+        if "GⅠ" in g or "G1" in g or "ＧⅠ" in g:
+            return  1.00
+        elif "GⅡ" in g or "G2" in g or "ＧⅡ" in g:
+            return  0.8
+        elif "GⅢ" in g or "G3" in g or "ＧⅢ" in g:
+            return  0.6
+        elif "L" in g or "OP" in g :
+            return  0.4
+        elif "3勝" in g:
+            return  0.35
+        elif "2勝" in g:
+            return  0.3
+        elif "1勝" in g:
+             return  0.12
+        elif "新馬" in g:
+             return  0.08
+        elif "未勝利" in g:
+            return  0.05
+        else:
+            return  0.4
+
     return 0
 
 
@@ -40,14 +55,14 @@ def load_csv(path: str) -> pd.DataFrame:
 
 
 # =========================
-# 距離単位正規化（★最重要）
+# 距離単位正規化
 # =========================
 def normalize_distance(v):
     if pd.isna(v):
         return v
     try:
-        v = int(v)
-        if v < 100:      # 16 → 1600
+        v = int(float(v))
+        if v < 100:
             return v * 100
         return v
     except Exception:
@@ -82,17 +97,69 @@ def split_common_and_horses(df: pd.DataFrame):
 
 
 # =========================
-# プロンプト生成（100点完全版）
+# プロンプト生成（100点完全・全ロジック統合版）
 # =========================
 def build_prompt(common_info: dict, horses: list) -> str:
+    # --- 1. 競馬場名の抽出と場別ロジック ---
+    date_info = common_info.get('date_info', '')
+    venue = ""
+    venues = ["中山", "東京", "京都", "阪神", "中京", "新潟", "福島", "小倉", "札幌", "函館"]
+    for v in venues:
+        if v in date_info:
+            venue = v
+            break
+
+    venue_logic = ""
+    if venue == "東京":
+        venue_logic = "- 【東京競馬場特化】: 直線が非常に長く末脚持続力が問われる。先行力よりも「prevX_agari」の順位と実績を最重視せよ。"
+    elif venue == "中山":
+        venue_logic = "- 【中山競馬場特化】: 直線が短く急坂がある。先行押し切りが基本。「running_style_score_0to1」が高い馬を優先評価せよ。"
+    elif venue == "京都":
+        venue_logic = "- 【京都競馬場特化】: 3コーナーの坂の下りを利用した加速が重要。平坦な直線でのスピード実績を重視せよ。"
+    elif venue == "阪神":
+        venue_logic = "- 【阪神競馬場特化】: 強力な急坂がある。パワーとスタミナを重視し、馬体重が重い馬や坂実績のある馬を評価せよ。"
+    elif venue == "中京":
+        venue_logic = "- 【中京競馬場特化】: 直線が長く急坂もあるタフなコース。差し・追い込みの「prevX_agari」実績を評価せよ。"
+    elif venue == "新潟":
+        venue_logic = "- 【新潟競馬場特化】: 日本一長い直線での極限のスピード勝負。「prevX_agari」の純粋なタイムの速さを最優先せよ。"
+    elif venue == "福島":
+        venue_logic = "- 【福島競馬場特化】: 小回りでコーナーが非常にきつい。「running_style_score_0to1」が高い馬を強力に加点せよ。"
+    elif venue == "小倉":
+        venue_logic = "- 【小倉競馬場特化】: 下り坂から始まるため超ハイペースになりやすい。ハイペースでの margin 実績を重視せよ。"
+    elif venue == "札幌":
+        venue_logic = "- 【札幌競馬場特化】: 直線が極めて短い洋芝コース。パワーを要するため、同表面（surface_win）の実績を重視せよ。"
+    elif venue == "函館":
+        venue_logic = "- 【函館競馬場特化】: 洋芝の平坦コース。先行馬の勝率が極めて高く、逃げ・先行実績を最優先せよ。"
+    else:
+        venue_logic = "- 【標準ロジック】: 距離適性と直近の着差（margin）を等価に評価せよ。"
+
+    # --- 2. 表面・距離・馬場状態の動的ロジック ---
+    surface = common_info.get('surface', '')
+    distance = common_info.get('distance', 1600)
+    condition = common_info.get('track_condition', '良')
+
+    condition_logic = ""
+    if surface == "ダ":
+        if distance <= 1400:
+            condition_logic = "- 【短距離ダート特化】: running_style_score_0to1 が 0.6 以上の先行力を最優先。砂被りのリスクが低い外枠（馬番12番以降）を微加点。"
+        else:
+            condition_logic = "- 【中長距離ダート特化】: 消耗戦になりやすいため、prevX_distance が今回と同等以上のスタミナ実績を重視。"
+    else: # 芝
+        if distance <= 1400:
+            condition_logic = "- 【芝短距離特化】: prevX_agari（上がりの速さ）の順位を重視。一瞬の加速力がある馬を高く評価。"
+        else:
+            condition_logic = "- 【芝中長距離特化】: jockey_course_win_rate の重みを最大化。道中の折り合いと仕掛けのタイミングが重要なため、名手を優先。"
+
+    if condition in ["重", "不", "不良", "稍"]:
+        condition_logic += "\n- 【道悪補正】: prevX_condition が「重・不」での好走歴（margin <= 0.6）がある馬の評価を大幅に引き上げ。"
+
+    # --- 3. プロンプト構築 ---
     prompt = f"""
 あなたは統計的特徴量のみを用いて競馬予測を行う専門AIである。
 主観・物語・人気・印象・オッズ推測は禁止する。
 CSVに存在する数値・カテゴリ情報のみを使用せよ。
 
-────────────────────
 【使用可能カラム定義（厳守）】
-────────────────────
 
 ■ 基本
 - horse_number
@@ -124,18 +191,17 @@ NaN は「評価不能」とし、推測・補完は禁止。
 NaN が多いこと自体を理由に減点してはならない。
 上記以外のカラムが存在する場合、それらも数値・カテゴリ情報として使用してよい。
 
-────────────────────
 【評価の絶対原則】
-────────────────────
-- 評価の中心は必ず prev1
-- prev2 / prev3 は一時的不調・例外検出専用
-- prev2 / prev3 を理由に評価を反転させてはならない
-- 単純平均・機械合算は禁止
-- どの補助情報も prev1 の評価を上書きしてはならない
+- 最優先評価: 直近3走（prev1-3）のうち、「今回の距離 ±200m かつ 今回の表面タイプ」で行われたレースでの最小 margin をその馬の「基準能力」とせよ。
+- 補完評価: 上記の合致レースが存在しない場合、または NaN の場合は、prev1 を中心に評価しつつ、統計的期待値（jockey_course_win_rate 等）の重みを高めよ。
+- トレンド補正: 3走の margin が改善傾向にある場合は加点、悪化傾向にある場合は減点せよ。
+- 単純平均・機械合算は禁止する。
 
-────────────────────
+【コース・条件別動的ロジック（最優先適用）】
+{venue_logic}
+{condition_logic}
+
 【レースグレード補正（反転禁止）】
-────────────────────
 - prev1_grade が高いレースで
   prev1_margin <= 1.0 の善戦をしている場合、
   同程度の prev1_margin を持つ下位グレード馬より
@@ -143,46 +209,35 @@ NaN が多いこと自体を理由に減点してはならない。
 - グレード差のみを理由に
   prev1_margin が明確に優秀な馬を下げてはならない
 
-────────────────────
 【着差評価基準】
-────────────────────
 - prevX_margin <= 0.3 : 非常に優秀
 - 0.3 < prevX_margin <= 0.6 : 良好
 - 0.6 < prevX_margin <= 1.0 : 標準
 - prevX_margin > 1.5 : 大敗
 
 
-────────────────────
-【一時的不調判定（厳格）】
-────────────────────
-以下すべてを満たす場合のみ、
-prev1 の大敗を能力低下と断定してはならない。
+【一時的不調判定（柔軟化・データ欠損対応）】
+以下のいずれかに該当する場合、prev1 の大敗を能力低下と断定せず、過去の良好な数値を優先して評価せよ。
 
-1. prev1_margin >= 1.5
-2. prev2_margin <= 0.6
-3. prev3_margin <= 0.6
-4. prev2 または prev3 の距離が今回距離 ±200m
+1. prev1 が「今回と異なる表面（芝/ダ）」または「距離差 400m 以上」での敗戦。
+2. prev1 が「重・不良馬場」で今回が「良・稍重」かつ、過去に良馬場で好走実績がある。
+3. prev2 または prev3 のいずれかで margin <= 0.6 を記録している。
+4. キャリアが浅く prev2 や prev3 が NaN であるが、jockey/father の統計値が極めて高い。
 
-満たさない場合、prev1 を最優先で評価する。
-────────────────────
+
 【安定性評価】
-────────────────────
 - 3走中2走以上 margin <= 0.6 → 安定型
 - 3走中1走のみ margin >= 1.5 → 一時的不調候補
 - 3走中2走以上 margin >= 1.5 → 明確な下降型
 
-────────────────────
 【距離適性】
-────────────────────
 - prevX_distance が今回距離 ±200m → 適性あり
 - 距離延長 × 先行型 → 加点
 - 距離短縮 × 差し型 → 加点
 - running_style_score_0to1 は先行性の強さを表す連続値であり、
   距離延長・短縮判断の補助としてのみ使用せよ
 
-────────────────────
 【補助補正ルール（反転禁止）】
-────────────────────
 - jockey_course_win_rate 高 → 安定性補正
 - father_course_win_rate 高 → 距離適性補助
 - dist/course/surface_win 高 → 条件一致補正
@@ -192,18 +247,14 @@ prev1 の大敗を能力低下と断定してはならない。
 - kankaku は「中◯週」の数値部分のみを解釈対象とせよ
 - kankakuで「連闘」とあった場合は0として解釈せよ
 
-────────────────────
 【数値制約】
-────────────────────
 - win_rate <= top2_rate <= top3_rate
 - 相対評価のみ
 - 数値の絶対値そのものに意味を持たせてはならない
 - 上位と下位の差を明確に
 - 全馬同値は禁止
 
-────────────────────
 【共通情報】
-────────────────────
 date_info: "{common_info.get('date_info')}"
 race_grade: {common_info.get('race_grade')}
 weather: "{common_info.get('weather')}"
@@ -211,22 +262,17 @@ track_condition: "{common_info.get('track_condition')}"
 surface: "{common_info.get('surface')}"
 distance: {common_info.get('distance')}
 
-────────────────────
 【出走馬データ】
-────────────────────
 {json.dumps(horses, ensure_ascii=False)}
 
-────────────────────
 【出力条件】
-────────────────────
 - JSON配列のみ
 - horse_number 昇順
 - 全馬必須
 - JSON以外の文字列は禁止
 
-────────────────────
 【出力形式】
-────────────────────[
+[
   {{
     "horse_number": number,
     "horse_name": "string",
@@ -237,8 +283,6 @@ distance: {common_info.get('distance')}
 ]
 """
     return prompt.strip()
-
-
 
 
 # =========================

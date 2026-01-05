@@ -115,18 +115,37 @@ def extract_prev_cols(df, num_prev=3):
 # =========================
 # ★ 追加：レースグレード数値化
 # =========================
-def grade_to_score(g):
-    if not isinstance(g, str):
-        return 0
-    if "GⅠ" in g or "G1" in g:
-        return 4
-    if "GⅡ" in g or "G2" in g:
-        return 3
-    if "GⅢ" in g or "G3" in g:
-        return 2
-    if "L" in g or "OP" in g:
-        return 1
-    return 0
+def grade_to_score(g, title=None):
+    # ===== データなし判定（唯一の条件） =====
+    if title is None:
+        return None
+    # ===== 既存ロジック（完全保持） =====
+    if isinstance(g, str):
+        if "GⅠ" in g or "G1" in g or "ＧⅠ" in g:
+            return  1.00
+        elif "GⅡ" in g or "G2" in g or "ＧⅡ" in g:
+            return  0.8
+        elif "GⅢ" in g or "G3" in g or "ＧⅢ" in g:
+            return  0.6
+        elif "L" in g or "OP" in g :
+            return  0.4
+
+    # ===== ★ 新規追加：race_title 条件補正 =====
+    if isinstance(title, str):
+        if "3勝" in title:
+             return  0.35
+        elif "2勝" in title:
+            return  0.3
+        elif "1勝" in title:
+             return  0.12
+        elif "新馬" in title:
+            return  0.08
+        elif "未勝利" in title:
+            return  0.05
+        else:
+            return  0.4
+    return None
+
 
 
 # =========================
@@ -169,9 +188,16 @@ def make_ai_ready_csv(detail_csv, common_csv, output_csv):
     # ===== ★ 修正点：prevX_grade を out_df に追加 =====
     for i in range(1, 4):
         raw_col = f"prev{i}_race_grade"
+        title_col = f"prev{i}_race_name"
         new_col = f"prev{i}_grade"
         if raw_col in df.columns:
-            out_df[new_col] = df[raw_col].apply(grade_to_score)
+            if title_col in df.columns:
+                out_df[new_col] = df.apply(
+                    lambda r: grade_to_score(r[raw_col], r[title_col]),
+                    axis=1
+                )
+            else:
+                out_df[new_col] = df[raw_col].apply(grade_to_score)
 
     track_condition = str(df_common["track_condition"].iloc[0])
     surface = str(df_common["surface"].iloc[0])
